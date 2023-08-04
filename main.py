@@ -1,3 +1,4 @@
+import math
 import subprocess
 import argparse
 import shutil
@@ -67,13 +68,13 @@ def drawtext_ts(s: str) -> str:
     return f'%{{expr_int_format:({s})/60:d:2}}:%{{expr_int_format:mod(({s})/1,60):d:2}}'
 
 
-def njdg(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
+def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
     pl_info.update(dl_client.extract_info(pl_info['url']))
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
 
     audio_probe = ffmpeg.probe(audio_temp_path)
-    duration = audio_probe['format']['duration']
-    pl_info['duration'] = duration
+    pl_info['duration'] = duration = \
+        math.ceil(audio_probe['format']['duration'] / FPS) * FPS
 
     audio = ffmpeg.input(audio_temp_path).filter('areverse')
     video = ffmpeg.input(f'color=color=#111111:r={FPS}:size=hd720', format='lavfi')
@@ -123,22 +124,41 @@ def njdg(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         y='h/2+53',
     )
 
-    out = os.path.realpath(f"{pl_dir}/{get_name(pl_info)}")
-    final = ffmpeg.output(audio, video, out, ab='128k', t=duration)
+    result_path = os.path.realpath(f"{pl_dir}/{get_name(pl_info)}")
+    final = ffmpeg.output(audio, video, result_path, ab='128k', t=duration)
     ffmpeg.run(final, overwrite_output=True, quiet=True)
+
+    # probe = ffmpeg.probe(result_path)
+    # duration = float(probe['format']['duration'])
+    # pl_info['duration'] = duration
+
     print(f'{pl_info["playlist_rank"]:5d} [{pl_info["id"]}] {pl_info["title"]}')
+    return result_path
+
+
+def make_cct(pl_dir: str, pl_infos: list):
+    mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
+    cct_path = os.path.realpath(f"{pl_dir}/.concat")
+    with open(cct_path, 'w', encoding='utf-8') as o:
+        o.write('\n'.join(
+            "file " + repr(os.path.realpath(f"{pl_dir}/{get_name(pl_info)}"))
+            for pl_info in pl_infos
+        ))
+
+    cct_in = ffmpeg.input(cct_path, format='concat', safe=0)
+    cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
+    ffmpeg.run(cct_out)
 
 
 def main(pl_dir: str, pl_url: str) -> None:
     m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
+    pl_infos = get_list(pl_url)
 
     clear_folder(pl_dir)
-    flat_pl = get_list(pl_url)
-
     with open(m3u_path, 'w', encoding='utf-8') as o:
-        o.write(gen_m3u(flat_pl))
+        o.write(gen_m3u(pl_infos))
 
     with yt_dlp.YoutubeDL({
         'overwrites': True,
@@ -146,18 +166,20 @@ def main(pl_dir: str, pl_url: str) -> None:
         'outtmpl': audio_temp_path,
         'quiet': True,
     }) as dl_client:
-        for m3u_i, pl_info in enumerate(flat_pl):
-            njdg(dl_client, pl_dir, pl_info)
-            if m3u_i == 0:
-                subprocess.Popen(
-                    ['vlc', m3u_path],
-                    creationflags=0x00000008,
-                    close_fds=True,
-                )
+        for m3u_i, pl_info in enumerate(pl_infos):
+            process_pl_info(dl_client, pl_dir, pl_info)
+            if m3u_i != 0:
+                continue
+            subprocess.Popen(
+                ['vlc', m3u_path],
+                creationflags=0x00000008,
+                close_fds=True,
+            )
 
     with open(txt_path, 'w', encoding='utf-8') as o:
-        o.write(gen_txt(flat_pl))
+        o.write(gen_txt(pl_infos))
     os.remove(audio_temp_path)
+    make_cct(pl_dir, pl_infos)
 
 
 if __name__ == '__main__':
