@@ -69,17 +69,21 @@ def drawtext_ts(s: str) -> str:
 
 
 def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
-    pl_info.update(dl_client.extract_info(pl_info['url']))
-    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
+    try:
+        ext_info = dl_client.extract_info(pl_info['url'])
+    except yt_dlp.utils.DownloadError:
+        return
+    merged_info = pl_info | ext_info
 
+    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     audio_probe = ffmpeg.probe(audio_temp_path)
-    pl_info['duration'] = duration = \
-        math.ceil(audio_probe['format']['duration'] / FPS) * FPS
+    probe_dur = float(audio_probe['format']['duration'])
+    merged_info['duration'] = duration = math.ceil(probe_dur / FPS) * FPS
 
     audio = ffmpeg.input(audio_temp_path).filter('areverse')
     video = ffmpeg.input(f'color=color=#111111:r={FPS}:size=hd720', format='lavfi')
 
-    title = pl_info["title"]
+    title = merged_info["title"]
     if len(title) > 23:
         title = re.split('\s*[\[\({]', title, 1)[0].rstrip(' -')
 
@@ -95,7 +99,7 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
 
     video = ffmpeg.drawtext(
         video,
-        text=pl_info["webpage_url"],
+        text=merged_info["webpage_url"],
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=23,
@@ -105,7 +109,7 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
 
     video = ffmpeg.drawtext(
         video,
-        text=f'{pl_info["playlist_rank"]} / {pl_info["playlist_count"]}',
+        text=f'{merged_info["playlist_rank"]} / {merged_info["playlist_count"]}',
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=19,
@@ -124,7 +128,7 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         y='h/2+53',
     )
 
-    result_path = os.path.realpath(f"{pl_dir}/{get_name(pl_info)}")
+    result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
     final = ffmpeg.output(audio, video, result_path, ab='128k', t=duration)
     ffmpeg.run(final, overwrite_output=True, quiet=True)
 
@@ -132,11 +136,14 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
     # duration = float(probe['format']['duration'])
     # pl_info['duration'] = duration
 
-    print(f'{pl_info["playlist_rank"]:5d} [{pl_info["id"]}] {pl_info["title"]}')
-    return result_path
+    print(f'{merged_info["playlist_rank"]:5d} [{merged_info["id"]}] {merged_info["title"]}')
+    return merged_info
 
 
 def make_cct(pl_dir: str, pl_infos: list):
+    '''
+    Make '.concat' file for use with FFmpeg's 'concat' filter.
+    '''
     mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
     cct_path = os.path.realpath(f"{pl_dir}/.concat")
     with open(cct_path, 'w', encoding='utf-8') as o:
@@ -144,6 +151,9 @@ def make_cct(pl_dir: str, pl_infos: list):
             "file " + repr(os.path.realpath(f"{pl_dir}/{get_name(pl_info)}"))
             for pl_info in pl_infos
         ))
+
+    if os.path.isfile(mp4_path):
+        os.remove(mp4_path)
 
     cct_in = ffmpeg.input(cct_path, format='concat', safe=0)
     cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
@@ -166,10 +176,23 @@ def main(pl_dir: str, pl_url: str) -> None:
         'outtmpl': audio_temp_path,
         'quiet': True,
     }) as dl_client:
-        for m3u_i, pl_info in enumerate(pl_infos):
-            process_pl_info(dl_client, pl_dir, pl_info)
-            if m3u_i != 0:
+        new_infos = []
+        played = False
+        for pl_info in pl_infos:
+            new_info = process_pl_info(
+                dl_client,
+                pl_dir,
+                pl_info,
+            )
+
+            if not new_info:
                 continue
+            new_infos.append(new_info)
+
+            if played:
+                continue
+            played = True
+
             subprocess.Popen(
                 ['vlc', m3u_path],
                 creationflags=0x00000008,
@@ -177,9 +200,9 @@ def main(pl_dir: str, pl_url: str) -> None:
             )
 
     with open(txt_path, 'w', encoding='utf-8') as o:
-        o.write(gen_txt(pl_infos))
+        o.write(gen_txt(new_infos))
     os.remove(audio_temp_path)
-    make_cct(pl_dir, pl_infos)
+    make_cct(pl_dir, new_infos)
 
 
 if __name__ == '__main__':
