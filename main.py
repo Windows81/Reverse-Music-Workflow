@@ -71,22 +71,78 @@ def drawtext_ts(s: str) -> str:
     return f'%{{expr_int_format:({s})/60:d:2}}:%{{expr_int_format:mod(({s})/1,60):d:2}}'
 
 
-def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
-    try:
-        ext_info = dl_client.extract_info(pl_info['url'])
-    except yt_dlp.utils.DownloadError:
-        return
-    merged_info = pl_info | ext_info
+def probe_audio(mediapath):
+    '''
+    https://github.com/James4Ever0/pyjom/blob/df0d336af61b0f6611c196882dd6b0dbd4e18bab/pyjom/audiotoolbox.py#L26
+    '''
+    audio = ffmpeg.input(mediapath).audio
 
+    stdout, stderr = (
+        audio.filter("volumedetect")
+        .output("/dev/null", f="null")
+        .run(capture_stdout=True, capture_stderr=True)
+    )
+
+    format_regex = {
+        'mean_volume': (re.compile(
+            r"\[Parsed_volumedetect.+\] mean_volume: ([\-0-9\.]+) dB"
+        ), lambda m: float(m.group(1))),
+        'max_volume': (re.compile(
+            r"\[Parsed_volumedetect.+\] max_volume: ([\-0-9\.]+) dB"
+        ), lambda m: float(m.group(1))),
+        'duration': (re.compile(
+            r"  Duration: (\d+):(\d{2}):(\d{2}).(\d{2})"
+        ), lambda m: math.ceil(
+            int(m.group(1))*3600 +
+            int(m.group(2))*60 +
+            int(m.group(3))*1 +
+            int(m.group(4))/100
+        )),
+    }
+
+    ret_dict = {}
+    stderr_lines: list[str] = stderr.decode("utf-8").split("\n")
+    for line in stderr_lines:
+        for i, (r, l) in format_regex.items():
+            match = r.match(line)
+            if match == None:
+                continue
+            ret_dict[i] = l(match)
+
+    return ret_dict
+
+
+def process_audio(merged_info: dict, pl_dir: str):
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     audio_probe = ffmpeg.probe(audio_temp_path)
     probe_dur = float(audio_probe['format']['duration'])
-    merged_info['duration'] = duration = math.ceil(probe_dur / FPS) * FPS
 
-    audio = ffmpeg.input(audio_temp_path).filter('areverse')
-    video = ffmpeg.input(f'color=color=#111111:r={
-                         FPS}:size=hd720', format='lavfi')
+    volume_adj = -merged_info['mean_volume'] - 10
+    audio = ffmpeg.input(
+        audio_temp_path
+    )
 
+    audio = ffmpeg.filter(
+        audio,
+        'volume',
+        f'{volume_adj}dB',
+    )
+
+    audio = ffmpeg.filter(
+        audio,
+        'areverse',
+    )
+
+    return audio
+
+
+def process_video(merged_info: dict):
+    video = ffmpeg.input(
+        f'color=color=#111111:r={FPS}:size=hd720',
+        format='lavfi'
+    )
+
+    duration = merged_info["duration"]
     title = merged_info["title"]
     if len(title) > 23:
         title = re.split('\\s*[\\[\\({]', title, 1)[0].rstrip(' -')
@@ -113,8 +169,10 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
 
     video = ffmpeg.drawtext(
         video,
-        text=f'{merged_info["playlist_rank"]
-                } / {merged_info["playlist_count"]}',
+        text=f'%d / %d' % (
+            merged_info["playlist_rank"],
+            merged_info["playlist_count"]
+        ),
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=19,
@@ -133,13 +191,28 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         y='h/2+53',  # type: ignore
     )
 
-    result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
-    final = ffmpeg.output(audio, video, result_path, ab='128k', t=duration)
-    ffmpeg.run(final, overwrite_output=True)
+    return video
 
-    # probe = ffmpeg.probe(result_path)
-    # duration = float(probe['format']['duration'])
-    # pl_info['duration'] = duration
+
+def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
+    try:
+        ext_info = dl_client.extract_info(pl_info['url'])
+    except yt_dlp.utils.DownloadError:
+        return
+
+    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
+    probed_audio = probe_audio(audio_temp_path)
+    merged_info = pl_info | ext_info | probed_audio
+
+    result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
+    final = ffmpeg.output(
+        process_audio(merged_info, pl_dir),
+        process_video(merged_info),
+        result_path,
+        ab='128k',
+        t=merged_info['duration'],
+    )
+    ffmpeg.run(final, overwrite_output=True)
 
     print(f'{merged_info["playlist_rank"]:5d} [{
           merged_info["id"]}] {merged_info["title"]}')
