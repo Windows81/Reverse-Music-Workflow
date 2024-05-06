@@ -19,6 +19,8 @@ def get_list(u) -> list:
         'quiet': True,
     }) as y:
         info = y.extract_info(u)
+        if not info:
+            raise Exception()
         pl_count = info['playlist_count']
         for pl_info, req_i in zip(info['entries'], info['requested_entries']):
             pl_info['playlist_url'] = info['webpage_url']
@@ -48,18 +50,19 @@ def gen_m3u(pl: list) -> str:
     )
 
 
-def format_time(t: int):
+def format_time(t: int) -> str:
     t = int(t)
     if t < 3600:
-        return f"{t//60:d}:{t%60:02d}"
-    return f"{t//3600:d}:{t//60%60:02d}:{t%60:02d}"
+        return f"{t // 60:d}:{t % 60:02d}"
+    return f"{t // 3600:d}:{t // 60 % 60:02d}:{t % 60:02d}"
 
 
 def gen_txt(pl: list) -> str:
     res = [pl[0]['playlist_url']]
     duration = 0
     for pl_info in pl:
-        res.append(f'{format_time(duration)} {pl_info["id"]} - {pl_info["title"]}')
+        res.append(f'{format_time(duration)} {
+                   pl_info["id"]} - {pl_info["title"]}')
         duration = duration + pl_info["duration"]
     return '\n'.join(res)
 
@@ -81,11 +84,12 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
     merged_info['duration'] = duration = math.ceil(probe_dur / FPS) * FPS
 
     audio = ffmpeg.input(audio_temp_path).filter('areverse')
-    video = ffmpeg.input(f'color=color=#111111:r={FPS}:size=hd720', format='lavfi')
+    video = ffmpeg.input(f'color=color=#111111:r={
+                         FPS}:size=hd720', format='lavfi')
 
     title = merged_info["title"]
     if len(title) > 23:
-        title = re.split('\s*[\[\({]', title, 1)[0].rstrip(' -')
+        title = re.split('\\s*[\\[\\({]', title, 1)[0].rstrip(' -')
 
     video = ffmpeg.drawtext(
         video,
@@ -93,8 +97,8 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         fontcolor='white',
         fontfile='0.ttf',
         fontsize=43,
-        x='(w-tw)/2',
-        y='h/2-37',
+        x='(w-tw)/2',  # type: ignore
+        y='h/2-37',  # type: ignore
     )
 
     video = ffmpeg.drawtext(
@@ -103,18 +107,19 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=23,
-        x='(w-tw)/2',
-        y='h/2+7',
+        x='(w-tw)/2',  # type: ignore
+        y='h/2+7',  # type: ignore
     )
 
     video = ffmpeg.drawtext(
         video,
-        text=f'{merged_info["playlist_rank"]} / {merged_info["playlist_count"]}',
+        text=f'{merged_info["playlist_rank"]
+                } / {merged_info["playlist_count"]}',
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=19,
-        x='(w-tw)/2',
-        y='h/2+31',
+        x='(w-tw)/2',  # type: ignore
+        y='h/2+31',  # type: ignore
     )
 
     video = ffmpeg.drawtext(
@@ -124,19 +129,20 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=17,
-        x='(w-tw)/2',
-        y='h/2+53',
+        x='(w-tw)/2',  # type: ignore
+        y='h/2+53',  # type: ignore
     )
 
     result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
     final = ffmpeg.output(audio, video, result_path, ab='128k', t=duration)
-    ffmpeg.run(final, overwrite_output=True, quiet=True)
+    ffmpeg.run(final, overwrite_output=True)
 
     # probe = ffmpeg.probe(result_path)
     # duration = float(probe['format']['duration'])
     # pl_info['duration'] = duration
 
-    print(f'{merged_info["playlist_rank"]:5d} [{merged_info["id"]}] {merged_info["title"]}')
+    print(f'{merged_info["playlist_rank"]:5d} [{
+          merged_info["id"]}] {merged_info["title"]}')
     return merged_info
 
 
@@ -148,7 +154,7 @@ def make_cct(pl_dir: str, pl_infos: list):
     cct_path = os.path.realpath(f"{pl_dir}/.concat")
     with open(cct_path, 'w', encoding='utf-8') as o:
         o.write('\n'.join(
-            "file " + repr(os.path.realpath(f"{pl_dir}/{get_name(pl_info)}"))
+            "file " + get_name(pl_info)
             for pl_info in pl_infos
         ))
 
