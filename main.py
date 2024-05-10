@@ -112,21 +112,21 @@ def probe_audio(mediapath):
     return ret_dict
 
 
-def process_audio(merged_info: dict, pl_dir: str):
-    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
-    audio_probe = ffmpeg.probe(audio_temp_path)
-    probe_dur = float(audio_probe['format']['duration'])
-
-    volume_adj = -merged_info['mean_volume'] - 10
+def get_processed_stream_audio(merged_info: dict, audio_path: str):
     audio = ffmpeg.input(
-        audio_temp_path
+        audio_path,
     )
 
-    audio = ffmpeg.filter(
-        audio,
-        'volume',
-        f'{volume_adj}dB',
-    )
+    # volume_adj = max(
+    #     -merged_info['mean_volume'] - 12,
+    #     0,
+    # )
+
+    # audio = ffmpeg.filter(
+    #     audio,
+    #     'volume',
+    #     f'{volume_adj}dB',
+    # )
 
     audio = ffmpeg.filter(
         audio,
@@ -136,7 +136,7 @@ def process_audio(merged_info: dict, pl_dir: str):
     return audio
 
 
-def process_video(merged_info: dict):
+def get_processed_stream_video(merged_info: dict):
     video = ffmpeg.input(
         f'color=color=#111111:r={FPS}:size=hd720',
         format='lavfi'
@@ -206,8 +206,8 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
 
     result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
     final = ffmpeg.output(
-        process_audio(merged_info, pl_dir),
-        process_video(merged_info),
+        get_processed_stream_audio(merged_info, audio_temp_path),
+        get_processed_stream_video(merged_info),
         result_path,
         ab='128k',
         t=merged_info['duration'],
@@ -239,6 +239,14 @@ def make_cct(pl_dir: str, pl_infos: list):
     ffmpeg.run(cct_out)
 
 
+def open_vlc(path: str):
+    subprocess.Popen(
+        ['vlc', path],
+        creationflags=0x00000008,
+        close_fds=True,
+    )
+
+
 def main(pl_dir: str, pl_url: str) -> None:
     m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
@@ -249,39 +257,34 @@ def main(pl_dir: str, pl_url: str) -> None:
     with open(m3u_path, 'w', encoding='utf-8') as o:
         o.write(gen_m3u(pl_infos))
 
-    with yt_dlp.YoutubeDL({
+    dl_client = yt_dlp.YoutubeDL({
         'overwrites': True,
         'format': 'bestaudio',
         'outtmpl': audio_temp_path,
         'quiet': True,
-    }) as dl_client:
-        new_infos = []
-        played = False
-        for pl_info in pl_infos:
-            new_info = process_pl_info(
-                dl_client,
-                pl_dir,
-                pl_info,
-            )
+    })
 
-            if not new_info:
-                continue
-            new_infos.append(new_info)
+    new_infos = []
+    played = False
+    for pl_info in pl_infos:
+        new_info = process_pl_info(
+            dl_client,
+            pl_dir,
+            pl_info,
+        )
+        if not new_info:
+            continue
 
-            if played:
-                continue
+        new_infos.append(new_info)
+        if not played:
             played = True
-
-            subprocess.Popen(
-                ['vlc', m3u_path],
-                creationflags=0x00000008,
-                close_fds=True,
-            )
+            open_vlc(m3u_path)
 
     with open(txt_path, 'w', encoding='utf-8') as o:
         o.write(gen_txt(new_infos))
     os.remove(audio_temp_path)
     make_cct(pl_dir, new_infos)
+    del dl_client
 
 
 if __name__ == '__main__':
