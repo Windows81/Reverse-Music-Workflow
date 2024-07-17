@@ -1,3 +1,4 @@
+import itertools
 import math
 import subprocess
 import argparse
@@ -10,26 +11,42 @@ import os
 FPS = 2
 
 
-def get_list(u) -> list:
+def get_list(u, make_reversed: bool) -> list:
     with yt_dlp.YoutubeDL({
         'dump_single_json': True,
-        'playlistreverse': True,
+        'playlistreverse': make_reversed,
         'extract_flat': True,
         'no_warnings': True,
         'quiet': True,
     }) as y:
-        info = y.extract_info(u)
-        if not info:
+        extracted_info = y.extract_info(u)
+        if not extracted_info:
             raise Exception()
-        pl_count = info['playlist_count']
-        for pl_info, req_i in zip(info['entries'], info['requested_entries']):
-            pl_info['playlist_url'] = info['webpage_url']
+        pl_count = extracted_info['playlist_count']
+
+        entries = extracted_info['entries']
+        ranks = extracted_info.get('requested_entries', None) or (
+            itertools.count(pl_count, -1)
+            if make_reversed else
+            itertools.count(1)
+        )
+
+        for pl_info, req_i in zip(entries, ranks):
+            pl_info['playlist_url'] = extracted_info['webpage_url']
             pl_info['playlist_count'] = pl_count
             pl_info['playlist_rank'] = req_i
-        return info['entries']
+        return entries
 
 
-def get_name(pl_info) -> str:
+def get_track_name(pl_info) -> str:
+    title = pl_info.get("title", None)
+    if title:
+        return title
+    url = pl_info.get("url")
+    return url.rsplit('/')[-1]
+
+
+def get_file_num_str(pl_info) -> str:
     return f"cache/{pl_info['playlist_rank']:05d}.mp4"
 
 
@@ -44,7 +61,8 @@ def gen_m3u(pl: list) -> str:
         [
             f'#EXTM3U',
         ] + [
-            f'#EXTINF:-1,{pl_info["title"]}\n{get_name(pl_info)}'
+            f'#EXTINF:-1,{get_track_name(pl_info)
+                          }\n{get_file_num_str(pl_info)}'
             for pl_info in pl
         ]
     )
@@ -61,8 +79,11 @@ def gen_txt(pl: list) -> str:
     res = [pl[0]['playlist_url']]
     duration = 0
     for pl_info in pl:
-        res.append(f'{format_time(duration)} {
-                   pl_info["id"]} - {pl_info["title"]}')
+        res.append(
+            '%s %s - %s' % (
+                format_time(duration), pl_info["id"], pl_info["title"],
+            )
+        )
         duration = duration + pl_info["duration"]
     return '\n'.join(res)
 
@@ -112,7 +133,7 @@ def probe_audio(mediapath):
     return ret_dict
 
 
-def get_processed_stream_audio(merged_info: dict, audio_path: str):
+def get_processed_stream_audio(merged_info: dict, make_reversed: bool, audio_path: str):
     audio = ffmpeg.input(
         audio_path,
     )
@@ -128,15 +149,16 @@ def get_processed_stream_audio(merged_info: dict, audio_path: str):
     #     f'{volume_adj}dB',
     # )
 
-    audio = ffmpeg.filter(
-        audio,
-        'areverse',
-    )
+    if make_reversed:
+        audio = ffmpeg.filter(
+            audio,
+            'areverse',
+        )
 
     return audio
 
 
-def get_processed_stream_video(merged_info: dict):
+def get_processed_stream_video(merged_info: dict, make_reversed: bool):
     video = ffmpeg.input(
         f'color=color=#111111:r={FPS}:size=hd720',
         format='lavfi'
@@ -182,7 +204,11 @@ def get_processed_stream_video(merged_info: dict):
 
     video = ffmpeg.drawtext(
         video,
-        text=drawtext_ts(f'{duration}-t'),
+        text=drawtext_ts(
+            f'{duration}-t'
+            if make_reversed else
+            f't'
+        ),
         escape_text=False,
         fontcolor='white',
         fontfile='1.ttf',
@@ -194,7 +220,7 @@ def get_processed_stream_video(merged_info: dict):
     return video
 
 
-def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
+def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reversed: bool):
     try:
         ext_info = dl_client.extract_info(pl_info['url'])
     except yt_dlp.utils.DownloadError:
@@ -204,22 +230,29 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info):
     probed_audio = probe_audio(audio_temp_path)
     merged_info = pl_info | ext_info | probed_audio
 
-    result_path = os.path.realpath(f"{pl_dir}/{get_name(merged_info)}")
+    result_path = os.path.realpath(f"{pl_dir}/{get_file_num_str(merged_info)}")
     final = ffmpeg.output(
-        get_processed_stream_audio(merged_info, audio_temp_path),
-        get_processed_stream_video(merged_info),
+        get_processed_stream_audio(
+            merged_info, make_reversed, audio_temp_path,
+        ),
+        get_processed_stream_video(
+            merged_info, make_reversed,
+        ),
         result_path,
         ab='128k',
         t=merged_info['duration'],
     )
     ffmpeg.run(final, overwrite_output=True)
 
-    print(f'{merged_info["playlist_rank"]:5d} [{
-          merged_info["id"]}] {merged_info["title"]}')
+    print(
+        '%5d [%s] %s' % (
+            merged_info["playlist_rank"], merged_info["id"], merged_info["title"],
+        )
+    )
     return merged_info
 
 
-def make_cct(pl_dir: str, pl_infos: list):
+def make_cct(pl_dir: str, pl_infos: list) -> None:
     '''
     Make '.concat' file for use with FFmpeg's 'concat' filter.
     '''
@@ -227,7 +260,7 @@ def make_cct(pl_dir: str, pl_infos: list):
     cct_path = os.path.realpath(f"{pl_dir}/.concat")
     with open(cct_path, 'w', encoding='utf-8') as o:
         o.write('\n'.join(
-            "file " + get_name(pl_info)
+            "file " + get_file_num_str(pl_info)
             for pl_info in pl_infos
         ))
 
@@ -247,11 +280,11 @@ def open_vlc(path: str):
     )
 
 
-def main(pl_dir: str, pl_url: str) -> None:
+def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
-    pl_infos = get_list(pl_url)
+    pl_infos = get_list(pl_url, make_reversed)
 
     clear_folder(pl_dir)
     with open(m3u_path, 'w', encoding='utf-8') as o:
@@ -271,6 +304,7 @@ def main(pl_dir: str, pl_url: str) -> None:
             dl_client,
             pl_dir,
             pl_info,
+            make_reversed,
         )
         if not new_info:
             continue
@@ -291,4 +325,5 @@ if __name__ == '__main__':
     args = argparse.ArgumentParser()
     args.add_argument('pl_url', type=str)
     args.add_argument('pl_dir', type=str, default='./test', nargs='?')
+    args.add_argument('--reverse', dest='make_reversed', action='store_true')
     main(**args.parse_args().__dict__)
