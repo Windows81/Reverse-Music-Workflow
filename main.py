@@ -101,7 +101,7 @@ def probe_audio(mediapath):
     stdout, stderr = (
         audio.filter("volumedetect")
         .output("/dev/null", f="null")
-        .run(capture_stdout=True, capture_stderr=True)
+        .run(quiet=True)
     )
 
     format_regex = {
@@ -242,7 +242,7 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
         ab='128k',
         t=merged_info['duration'],
     )
-    ffmpeg.run(final, overwrite_output=True)
+    ffmpeg.run(final, overwrite_output=True, quiet=True)
 
     print(
         '%5d [%s] %s' % (
@@ -269,7 +269,7 @@ def make_cct(pl_dir: str, pl_infos: list) -> None:
 
     cct_in = ffmpeg.input(cct_path, format='concat', safe=0)
     cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
-    ffmpeg.run(cct_out)
+    ffmpeg.run(cct_out, quiet=True)
 
 
 def open_vlc(path: str):
