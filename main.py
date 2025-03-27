@@ -1,10 +1,10 @@
 import itertools
-import math
 import subprocess
 import argparse
 import shutil
 import yt_dlp
 import ffmpeg
+import math
 import re
 import os
 
@@ -167,7 +167,7 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
     duration = merged_info["duration"]
     title = merged_info["title"]
     if len(title) > 23:
-        title = re.split('\\s*[\\[\\({]', title, 1)[0].rstrip(' -')
+        title = re.split('\\s*[\\[\\({]', title, maxsplit=1)[0].rstrip(' -')
 
     video = ffmpeg.drawtext(
         video,
