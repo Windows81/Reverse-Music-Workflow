@@ -1,3 +1,4 @@
+# pyright: basic
 import itertools
 import subprocess
 import argparse
@@ -11,7 +12,7 @@ import os
 FPS = 2
 
 
-def get_list(u, make_reversed: bool) -> list:
+def get_list(u, make_reversed: bool) -> list[dict]:
     with yt_dlp.YoutubeDL({
         'dump_single_json': True,
         'playlistreverse': make_reversed,
