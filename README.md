@@ -16,6 +16,7 @@ python3 main.py --reverse "https://music.youtube.com/playlist?list=RDCLAK5uy_nfs
 To download a SoundCloud album to `./"Plugin ParaDice"` and *not* reverse the songs:
 ```
 python3 main.py "https://soundcloud.com/aaaroh-abo-shadi/sets/plugin-paradice-a-gambling-ad" "Plugin ParaDice"
+```
 
 ## Resultant File Tree
 
