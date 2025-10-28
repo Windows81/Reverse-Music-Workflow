@@ -1,2 +1,0 @@
-$items = Get-ChildItem cache -Name | Sort-Object -Descending | ForEach-Object { "file '$PSScriptRoot/cache/$_'" }
-$items | ffmpeg -f concat -protocol_whitelist pipe,file -safe 0 -i - -max_interleave_delta 0 -c copy .mp4 -y

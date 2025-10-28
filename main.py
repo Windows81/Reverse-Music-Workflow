@@ -22,13 +22,16 @@ def get_list(u, make_reversed: bool) -> list[dict]:
     }) as y:
         extracted_info = y.extract_info(u)
         assert extracted_info is not None
-        entries = extracted_info['entries']
+        entries: list[dict] = extracted_info['entries']
 
         pl_count = len(entries)
-        ranks = extracted_info.get('requested_entries', None) or (
-            itertools.count(+pl_count, -1)
-            if make_reversed else
-            itertools.count(+1, +1)
+        ranks = extracted_info.get(
+            'requested_entries',
+            (
+                itertools.count(+pl_count, -1)
+                if make_reversed else
+                itertools.count(+1, +1)
+            ),
         )
 
         for pl_info, req_i in zip(entries, ranks):
@@ -73,8 +76,8 @@ def gen_m3u(pl: list) -> str:
 def format_time(t: int) -> str:
     t = int(t)
     if t < 3600:
-        return f"{t // 60:d}:{t % 60: 02d}"
-    return f"{t // 3600:d}:{t // 60 % 60: 02d}:{t % 60: 02d}"
+        return f"{t // 60:d}:{t % 60:02d}"
+    return f"{t // 3600:d}:{t // 60 % 60:02d}:{t % 60:02d}"
 
 
 def gen_txt(pl: list) -> str:
