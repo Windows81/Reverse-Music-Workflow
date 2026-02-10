@@ -22,7 +22,13 @@ def get_list(u, make_reversed: bool) -> list:
         extracted_info = y.extract_info(u)
         if not extracted_info:
             raise Exception()
-        pl_count = extracted_info['playlist_count']
+
+        # If the input URL is not a playlist, encapsulate the info.
+        pl_count = extracted_info.get('playlist_count')
+        if pl_count is None:
+            extracted_info['url'] = extracted_info['playlist_url'] = extracted_info['webpage_url']
+            extracted_info['playlist_count'] = extracted_info['playlist_rank'] = 1
+            return [extracted_info]
 
         entries = extracted_info['entries']
         ranks = extracted_info.get('requested_entries', None) or (
@@ -42,12 +48,12 @@ def get_track_name(pl_info) -> str:
     title = pl_info.get("title", None)
     if title:
         return title
-    url = pl_info.get("url")
+    url = pl_info["url"]
     return url.rsplit('/')[-1]
 
 
 def get_file_num_str(pl_info) -> str:
-    return f"cache/{pl_info['playlist_rank']:05d}.mp4"
+    return "cache/%05d.mp4" % pl_info['playlist_rank']
 
 
 def clear_folder(pl_dir: str) -> None:
@@ -57,15 +63,14 @@ def clear_folder(pl_dir: str) -> None:
 
 
 def gen_m3u(pl: list) -> str:
-    return '\n'.join(
-        [
-            f'#EXTM3U',
-        ] + [
-            f'#EXTINF:-1,{get_track_name(pl_info)
-                          }\n{get_file_num_str(pl_info)}'
+    return '\n'.join([
+        f'#EXTM3U',
+        *(
+            '#EXTINF:-1,%s\n%s' %
+            (get_track_name(pl_info), get_file_num_str(pl_info))
             for pl_info in pl
-        ]
-    )
+        ),
+    ])
 
 
 def format_time(t: int) -> str:
