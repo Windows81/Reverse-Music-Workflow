@@ -1,17 +1,18 @@
+# pyright: basic
 import itertools
-import math
 import subprocess
 import argparse
 import shutil
 import yt_dlp
 import ffmpeg
+import math
 import re
 import os
 
 FPS = 2
 
 
-def get_list(u, make_reversed: bool) -> list:
+def get_list(u, make_reversed: bool) -> list[dict]:
     with yt_dlp.YoutubeDL({
         'dump_single_json': True,
         'playlistreverse': make_reversed,
@@ -30,11 +31,16 @@ def get_list(u, make_reversed: bool) -> list:
             extracted_info['playlist_count'] = extracted_info['playlist_rank'] = 1
             return [extracted_info]
 
-        entries = extracted_info['entries']
-        ranks = extracted_info.get('requested_entries', None) or (
-            itertools.count(pl_count, -1)
-            if make_reversed else
-            itertools.count(1)
+        entries: list[dict] = extracted_info['entries']
+
+        pl_count = len(entries)
+        ranks = extracted_info.get(
+            'requested_entries',
+            (
+                itertools.count(+pl_count, -1)
+                if make_reversed else
+                itertools.count(+1, +1)
+            ),
         )
 
         for pl_info, req_i in zip(entries, ranks):
@@ -56,7 +62,7 @@ def get_file_num_str(pl_info) -> str:
     return "cache/%05d.mp4" % pl_info['playlist_rank']
 
 
-def clear_folder(pl_dir: str) -> None:
+def clear_cache_dir(pl_dir: str) -> None:
     cache = os.path.realpath(f"{pl_dir}/cache")
     shutil.rmtree(cache, ignore_errors=True)
     os.makedirs(cache)
@@ -66,9 +72,12 @@ def gen_m3u(pl: list) -> str:
     return '\n'.join([
         f'#EXTM3U',
         *(
-            '#EXTINF:-1,%s\n%s' %
-            (get_track_name(pl_info), get_file_num_str(pl_info))
+            v
             for pl_info in pl
+            for v in (
+                f'#EXTINF:-1,{get_track_name(pl_info)}',
+                get_file_num_str(pl_info),
+            )
         ),
     ])
 
@@ -86,7 +95,9 @@ def gen_txt(pl: list) -> str:
     for pl_info in pl:
         res.append(
             '%s %s - %s' % (
-                format_time(duration), pl_info["id"], pl_info["title"],
+                format_time(duration),
+                pl_info['webpage_url'],
+                pl_info['title'],
             )
         )
         duration = duration + pl_info["duration"]
@@ -172,7 +183,7 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
     duration = merged_info["duration"]
     title = merged_info["title"]
     if len(title) > 23:
-        title = re.split('\\s*[\\[\\({]', title, 1)[0].rstrip(' -')
+        title = re.split('\\s*[\\[\\({]', title, maxsplit=1)[0].rstrip(' -')
 
     video = ffmpeg.drawtext(
         video,
@@ -180,8 +191,8 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
         fontcolor='white',
         fontfile='0.ttf',
         fontsize=43,
-        x='(w-tw)/2',  # type: ignore
-        y='h/2-37',  # type: ignore
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2-37',  # pyright: ignore[reportArgumentType]
     )
 
     video = ffmpeg.drawtext(
@@ -190,8 +201,8 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=23,
-        x='(w-tw)/2',  # type: ignore
-        y='h/2+7',  # type: ignore
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2+7',  # pyright: ignore[reportArgumentType]
     )
 
     video = ffmpeg.drawtext(
@@ -203,8 +214,8 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=19,
-        x='(w-tw)/2',  # type: ignore
-        y='h/2+31',  # type: ignore
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2+31',  # pyright: ignore[reportArgumentType]
     )
 
     video = ffmpeg.drawtext(
@@ -218,8 +229,8 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=17,
-        x='(w-tw)/2',  # type: ignore
-        y='h/2+53',  # type: ignore
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2+53',  # pyright: ignore[reportArgumentType]
     )
 
     return video
@@ -227,7 +238,7 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
 
 def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reversed: bool):
     try:
-        ext_info = dl_client.extract_info(pl_info['url'])
+        ext_info = dl_client.extract_info(pl_info["url"])
     except yt_dlp.utils.DownloadError:
         return
 
@@ -244,8 +255,8 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
             merged_info, make_reversed,
         ),
         result_path,
-        ab='128k',
-        t=merged_info['duration'],
+        ab="128k",
+        t=merged_info["duration"],
     )
     ffmpeg.run(final, overwrite_output=True, quiet=True)
 
@@ -291,7 +302,7 @@ def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     pl_infos = get_list(pl_url, make_reversed)
 
-    clear_folder(pl_dir)
+    clear_cache_dir(pl_dir)
     with open(m3u_path, 'w', encoding='utf-8') as o:
         o.write(gen_m3u(pl_infos))
 
@@ -321,6 +332,7 @@ def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
 
     with open(txt_path, 'w', encoding='utf-8') as o:
         o.write(gen_txt(new_infos))
+
     os.remove(audio_temp_path)
     make_cct(pl_dir, new_infos)
     del dl_client
