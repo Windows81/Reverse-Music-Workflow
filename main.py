@@ -1,6 +1,8 @@
 # pyright: basic
-import itertools
+import yt_dlp.utils
 import subprocess
+import itertools
+import tempfile
 import argparse
 import shutil
 import yt_dlp
@@ -13,10 +15,13 @@ FPS = 2
 
 
 def get_list(u, make_reversed: bool) -> list[dict]:
-    with yt_dlp.YoutubeDL({
+    with yt_dlp.YoutubeDL({  # pyright: ignore[reportArgumentType]
         'dump_single_json': True,
         'playlistreverse': make_reversed,
+        'skip_download': True,
+        'simulate': True,
         'extract_flat': True,
+        'noplaylist': False,
         'no_warnings': True,
         'quiet': True,
     }) as y:
@@ -149,21 +154,12 @@ def probe_audio(mediapath):
     return ret_dict
 
 
-def get_processed_stream_audio(merged_info: dict, make_reversed: bool, audio_path: str):
+def get_processed_stream_audio(audio_path: str, make_reversed: bool):
     audio = ffmpeg.input(
         audio_path,
+        dn=None,
+        vn=None,
     )
-
-    # volume_adj = max(
-    #     -merged_info['mean_volume'] - 12,
-    #     0,
-    # )
-
-    # audio = ffmpeg.filter(
-    #     audio,
-    #     'volume',
-    #     f'{volume_adj}dB',
-    # )
 
     if make_reversed:
         audio = ffmpeg.filter(
@@ -174,14 +170,12 @@ def get_processed_stream_audio(merged_info: dict, make_reversed: bool, audio_pat
     return audio
 
 
-def get_processed_stream_video(merged_info: dict, make_reversed: bool):
+def get_processed_stream_video(duration: float, title: str, footer1: str, footer2: str, make_reversed: bool):
     video = ffmpeg.input(
-        f'color=color=#111111:r={FPS}:size=hd720',
+        f'color=color=#111111:r={FPS}:size=1280x120',
         format='lavfi'
     )
 
-    duration = merged_info["duration"]
-    title = merged_info["title"]
     if len(title) > 23:
         title = re.split('\\s*[\\[\\({]', title, maxsplit=1)[0].rstrip(' -')
 
@@ -197,7 +191,7 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
 
     video = ffmpeg.drawtext(
         video,
-        text=merged_info["webpage_url"],
+        text=footer1,
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=23,
@@ -207,10 +201,147 @@ def get_processed_stream_video(merged_info: dict, make_reversed: bool):
 
     video = ffmpeg.drawtext(
         video,
-        text=f'%d / %d' % (
-            merged_info["playlist_rank"],
-            merged_info["playlist_count"]
+        text=footer2,
+        fontcolor='white',
+        fontfile='1.ttf',
+        fontsize=19,
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2+31',  # pyright: ignore[reportArgumentType]
+    )
+
+    video = ffmpeg.drawtext(
+        video,
+        text=drawtext_ts(
+            f'{duration}-t'
+            if make_reversed else
+            f't'
         ),
+        escape_text=False,
+        fontcolor='white',
+        fontfile='1.ttf',
+        fontsize=17,
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2+53',  # pyright: ignore[reportArgumentType]
+    )
+
+    return video
+
+
+def process_srt(t: list[str], duration: float, make_reversed: bool = True) -> list[str]:
+    def get_time(v: str) -> float:
+        if len(v) == 9:
+            v = "00:" + v
+        h = int(v[:-10])
+        m = int(v[-9:-7])
+        s = int(v[-6:-4])
+        l = int(v[-3:])
+        return 1e3 * (60 * (60 * h + m) + s) + l
+
+    def invert_chunk(v: str, index: int, offset: float) -> str:
+        t = v.split("\n", 2)
+        t[0] = str(index)
+        a = []
+        for v in t[1].split(" --> "):
+            r = max(1e3 * offset - get_time(v), 0)
+            H = math.floor(r / 3600000)
+            M = math.floor(r / 60000 % 60)
+            S = math.floor(r / 1000 % 60)
+            L = math.floor(r % 1000)
+            a.append(f"{H:02d}:{M:02d}:{S:02d},{L:03d}")
+
+        a.reverse()
+        t[1] = " --> ".join(a)
+        return "\n".join(t)
+
+    def trim_chunk(v: str) -> str:
+        t = v.split("\n", 2)
+        t[2].replace('\n', ' ')
+        return '\n'.join(t)
+
+    c = 1
+    chunks = []
+    empty_flag = True
+    last_end_time_str = '00:00:00,000'
+    for l in t:
+        stripped_line = l.strip(" \t\ufeff\n\r")
+        if empty_flag and stripped_line == str(c):
+            chunks.append(f"{c}")
+            c += 1
+            continue
+
+        empty_flag = stripped_line == ''
+        if empty_flag:
+            continue
+
+        # This section is to ensure that no two subtitles overlap at the same time.
+        time_split = stripped_line.find(' --> ')
+        if time_split != -1:
+            start_time_str = stripped_line[:time_split]
+            end_time_str = stripped_line[time_split+5:]
+            start_time = get_time(start_time_str)
+            last_end_time = get_time(last_end_time_str)
+            if last_end_time > start_time:
+                start_time_str = last_end_time_str
+            chunks[-1] += f'\n{start_time_str} --> {end_time_str}'
+            last_end_time_str = end_time_str
+            continue
+
+        chunks[-1] += '\n' + stripped_line
+
+    if not make_reversed:
+        return [
+            f"{trim_chunk(l)}\n\n"
+            for i, l in enumerate(chunks, 1)
+        ]
+
+    return [
+        f"{invert_chunk(trim_chunk(l), index=i, offset=duration-0.25)}\n\n"
+        for i, l in enumerate(reversed(chunks), 1)
+    ]
+
+
+def get_processed_stream_lyric_video(duration: float, title: str, srt_path: str, footer2: str, make_reversed: bool):
+    if make_reversed:
+        old_srt_path = srt_path
+        _, srt_path = tempfile.mkstemp('.srt')
+
+        open(srt_path, 'w').writelines(
+            process_srt(
+                open(old_srt_path).readlines(),
+                duration=duration,
+                make_reversed=make_reversed,
+            ),
+        )
+
+    video = ffmpeg.input(
+        f'color=color=#111111:r={FPS}:size=hd720',
+        format='lavfi'
+    )
+
+    if len(title) > 23:
+        title = re.split('\\s*[\\[\\({]', title, maxsplit=1)[0].rstrip(' -')
+
+    video = ffmpeg.drawtext(
+        video,
+        text=title,
+        fontcolor='white',
+        fontfile='0.ttf',
+        fontsize=43,
+        x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+        y='h/2-37',  # pyright: ignore[reportArgumentType]
+    )
+
+    video = ffmpeg.filter(
+        video,
+        filter_name='subtitles',
+        filename=os.path.abspath(srt_path),
+        fontsdir='.',
+        force_style='Fontname=Inconsolata Expanded Medium,Fontsize=11,Alignment=6,Outline=0,MarginV=143',
+    )
+
+    video = ffmpeg.drawtext(
+        video,
+        text=footer2,
         fontcolor='white',
         fontfile='1.ttf',
         fontsize=19,
@@ -249,13 +380,21 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
     result_path = os.path.realpath(f"{pl_dir}/{get_file_num_str(merged_info)}")
     final = ffmpeg.output(
         get_processed_stream_audio(
-            merged_info, make_reversed, audio_temp_path,
+            audio_path=audio_temp_path,
+            make_reversed=make_reversed,
         ),
         get_processed_stream_video(
-            merged_info, make_reversed,
+            duration=merged_info["duration"],
+            title=merged_info["title"],
+            footer1=merged_info["webpage_url"],
+            footer2=f'%d / %d' % (
+                merged_info["playlist_rank"],
+                merged_info["playlist_count"]
+            ),
+            make_reversed=make_reversed,
         ),
         result_path,
-        ab="128k",
+        ab="192k",
         t=merged_info["duration"],
     )
     ffmpeg.run(final, overwrite_output=True, quiet=True)
@@ -296,7 +435,7 @@ def open_vlc(path: str):
     )
 
 
-def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
+def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
@@ -310,6 +449,7 @@ def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
         'overwrites': True,
         'format': 'bestaudio',
         'outtmpl': audio_temp_path,
+        'no_warnings': True,
         'quiet': True,
     })
 
@@ -340,7 +480,15 @@ def main(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
-    args.add_argument('pl_url', type=str)
-    args.add_argument('pl_dir', type=str, default='./test', nargs='?')
-    args.add_argument('--reverse', dest='make_reversed', action='store_true')
-    main(**args.parse_args().__dict__)
+    args.add_argument(
+        'pl_url', type=str,
+        help="Playlist URL to be processed by yt-dlp",
+    )
+    args.add_argument(
+        'pl_dir', type=str,
+        default='./test', nargs='?',
+    )
+    args.add_argument(
+        '--reverse', dest='make_reversed', action='store_true',
+    )
+    process(**args.parse_args().__dict__)
