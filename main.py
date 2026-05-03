@@ -259,9 +259,8 @@ def process_srt(t: list[str], duration: float, make_reversed: bool = True) -> li
         return '\n'.join(t)
 
     c = 1
-    chunks = []
+    chunks = list[str]()
     empty_flag = True
-    last_end_time_str = '00:00:00,000'
     for l in t:
         stripped_line = l.strip(" \t\ufeff\n\r")
         if empty_flag and stripped_line == str(c):
@@ -273,20 +272,27 @@ def process_srt(t: list[str], duration: float, make_reversed: bool = True) -> li
         if empty_flag:
             continue
 
-        # This section is to ensure that no two subtitles overlap at the same time.
-        time_split = stripped_line.find(' --> ')
-        if time_split != -1:
-            start_time_str = stripped_line[:time_split]
-            end_time_str = stripped_line[time_split+5:]
-            start_time = get_time(start_time_str)
-            last_end_time = get_time(last_end_time_str)
-            if last_end_time > start_time:
-                start_time_str = last_end_time_str
-            chunks[-1] += f'\n{start_time_str} --> {end_time_str}'
-            last_end_time_str = end_time_str
+        chunks[-1] += '\n' + stripped_line
+
+    # This section is to ensure that no two subtitles overlap at the same time.
+    for c in range(len(chunks)-1):
+        start_time_start = chunks[c].find('\n') + 1
+        start_time_end = chunks[c].find(' -')
+        last_end_time_start = chunks[c-1].find(' --> ') + 5
+        last_end_time_end = chunks[c-1].find('\n', last_end_time_start)
+
+        # Since there was addition, failure would yield 4 instead of -1:
+        if last_end_time_start <= 4:
             continue
 
-        chunks[-1] += '\n' + stripped_line
+        start_time_str = chunks[c][start_time_start:start_time_end]
+        last_end_time_str = chunks[c-1][last_end_time_start:last_end_time_end]
+        if get_time(last_end_time_str) > get_time(start_time_str):
+            chunks[c-1] = ''.join([
+                chunks[c-1][:last_end_time_start],
+                start_time_str,
+                chunks[c-1][last_end_time_end:],
+            ])
 
     if not make_reversed:
         return [

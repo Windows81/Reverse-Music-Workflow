@@ -4,8 +4,9 @@ import main
 
 
 def process(pl_dir: str, make_reversed: bool):
-    audio_path = 'Apple Music/Vibes/231.m4a'
-    srt_path = 'Apple Music/Vibes/231.srt'
+    n = 230
+    audio_path = f'Apple Music/Vibes/{n:03d}.m4a'
+    srt_path = f'Apple Music/Vibes/{n:03d}.srt'
     probed_audio = main.probe_audio(audio_path)
     print(probed_audio)
     final = ffmpeg.output(
@@ -13,7 +14,7 @@ def process(pl_dir: str, make_reversed: bool):
             duration=probed_audio['duration'],
             title='UwU',
             srt_path=srt_path,
-            footer2='6767',
+            footer2=f'{n} / 6767',
             make_reversed=make_reversed,
         ),
         main.get_processed_stream_audio(
