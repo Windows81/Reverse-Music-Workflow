@@ -1,4 +1,5 @@
 # pyright: basic
+from concurrent.futures import ThreadPoolExecutor
 import yt_dlp.utils
 import subprocess
 import itertools
@@ -73,12 +74,12 @@ def clear_cache_dir(pl_dir: str) -> None:
     os.makedirs(cache)
 
 
-def gen_m3u(pl: list) -> str:
+def gen_m3u_from_pl_infos(pl_dir: str, pl_infos: list) -> str:
     return '\n'.join([
         f'#EXTM3U',
         *(
             v
-            for pl_info in pl
+            for pl_info in pl_infos
             for v in (
                 f'#EXTINF:-1,{get_track_name(pl_info)}',
                 get_file_num_str(pl_info),
@@ -94,10 +95,10 @@ def format_time(t: int) -> str:
     return f"{t // 3600:d}:{t // 60 % 60:02d}:{t % 60:02d}"
 
 
-def gen_txt(pl: list) -> str:
-    res = [pl[0]['playlist_url']]
+def gen_txt_from_pl_infos(pl_dir: str, pl_infos: list) -> str:
+    res = [pl_infos[0]['playlist_url']]
     duration = 0
-    for pl_info in pl:
+    for pl_info in pl_infos:
         res.append(
             '%s %s - %s' % (
                 format_time(duration),
@@ -117,7 +118,7 @@ def probe_audio(mediapath):
     '''
     https://github.com/James4Ever0/pyjom/blob/df0d336af61b0f6611c196882dd6b0dbd4e18bab/pyjom/audiotoolbox.py#L26
     '''
-    audio = ffmpeg.input(mediapath).audio
+    audio = ffmpeg.input(filename=mediapath, dn=None, vn=None).audio
 
     stdout, stderr = (
         audio.filter("volumedetect")
@@ -126,15 +127,24 @@ def probe_audio(mediapath):
     )
 
     format_regex = {
+        'id3_title': (re.compile(
+            r"    title           : ([^\r]+)"
+        ), lambda m: m.group(1)),
+        'id3_artist': (re.compile(
+            r"    artist          : ([^\r]+)"
+        ), lambda m: m.group(1)),
+
         'mean_volume': (re.compile(
             r"\[Parsed_volumedetect.+\] mean_volume: ([\-0-9\.]+) dB"
         ), lambda m: float(m.group(1))),
+
         'max_volume': (re.compile(
             r"\[Parsed_volumedetect.+\] max_volume: ([\-0-9\.]+) dB"
         ), lambda m: float(m.group(1))),
+
         'duration': (re.compile(
             r"  Duration: (\d+):(\d{2}):(\d{2}).(\d{2})"
-        ), lambda m: math.ceil(
+        ), lambda m: (
             int(m.group(1))*3600 +
             int(m.group(2))*60 +
             int(m.group(3))*1 +
@@ -143,13 +153,20 @@ def probe_audio(mediapath):
     }
 
     ret_dict = {}
+    items_left = len(format_regex)
     stderr_lines: list[str] = stderr.decode("utf-8").split("\n")
     for line in stderr_lines:
+        if items_left == 0:
+            break
         for i, (r, l) in format_regex.items():
             match = r.match(line)
             if match == None:
                 continue
+            if i in ret_dict:
+                continue
             ret_dict[i] = l(match)
+            items_left -= 1
+            break
 
     return ret_dict
 
@@ -301,23 +318,24 @@ def process_srt(t: list[str], duration: float, make_reversed: bool = True) -> li
         ]
 
     return [
-        f"{invert_chunk(trim_chunk(l), index=i, offset=duration-0.25)}\n\n"
+        f"{invert_chunk(trim_chunk(l), index=i, offset=duration)}\n\n"
         for i, l in enumerate(reversed(chunks), 1)
     ]
 
 
 def get_processed_stream_lyric_video(duration: float, title: str, srt_path: str, footer2: str, make_reversed: bool):
-    if make_reversed:
-        old_srt_path = srt_path
-        _, srt_path = tempfile.mkstemp('.srt')
-
-        open(srt_path, 'w').writelines(
+    if os.path.exists(srt_path):
+        temp_descip, temp_srt_path = tempfile.mkstemp('.srt')
+        read_data = open(srt_path, encoding='utf-8').readlines()
+        open(temp_srt_path, 'w', encoding='utf-8').writelines(
             process_srt(
-                open(old_srt_path).readlines(),
+                read_data,
                 duration=duration,
                 make_reversed=make_reversed,
             ),
         )
+    else:
+        temp_descip = temp_srt_path = None
 
     video = ffmpeg.input(
         f'color=color=#111111:r={FPS}:size=hd720',
@@ -337,13 +355,24 @@ def get_processed_stream_lyric_video(duration: float, title: str, srt_path: str,
         y='h/2-37',  # pyright: ignore[reportArgumentType]
     )
 
-    video = ffmpeg.filter(
-        video,
-        filter_name='subtitles',
-        filename=os.path.abspath(srt_path),
-        fontsdir='.',
-        force_style='Fontname=Inconsolata Expanded Medium,Fontsize=11,Alignment=6,Outline=0,MarginV=143',
-    )
+    if temp_srt_path is not None:
+        video = ffmpeg.filter(
+            video,
+            filter_name='subtitles',
+            filename=os.path.abspath(temp_srt_path),
+            fontsdir='.',
+            force_style='Fontname=Inconsolata Expanded Medium,Fontsize=11,Alignment=6,Outline=0,MarginV=144',
+        )
+    else:
+        video = ffmpeg.drawtext(
+            video,
+            text='-',
+            fontcolor='white',
+            fontfile='1.ttf',
+            fontsize=23,
+            x='(w-tw)/2',  # pyright: ignore[reportArgumentType]
+            y='h/2+7',  # pyright: ignore[reportArgumentType]
+        )
 
     video = ffmpeg.drawtext(
         video,
@@ -370,6 +399,8 @@ def get_processed_stream_lyric_video(duration: float, title: str, srt_path: str,
         y='h/2+53',  # pyright: ignore[reportArgumentType]
     )
 
+    if temp_descip:
+        os.close(temp_descip)
     return video
 
 
@@ -381,7 +412,9 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
 
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     probed_audio = probe_audio(audio_temp_path)
-    merged_info = pl_info | ext_info | probed_audio
+    merged_info = {
+        'duration': math.ceil(probed_audio["duration"])
+    } | pl_info | ext_info | probed_audio
 
     result_path = os.path.realpath(f"{pl_dir}/{get_file_num_str(merged_info)}")
     final = ffmpeg.output(
@@ -413,24 +446,14 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
     return merged_info
 
 
-def make_cct(pl_dir: str, pl_infos: list) -> None:
+def gen_cct_from_pl_infos(pl_dir: str, pl_infos: list) -> str:
     '''
-    Make '.concat' file for use with FFmpeg's 'concat' filter.
+    Makes a '.concat' string to be used with FFmpeg's 'concat' filter.
     '''
-    mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
-    cct_path = os.path.realpath(f"{pl_dir}/.concat")
-    with open(cct_path, 'w', encoding='utf-8') as o:
-        o.write('\n'.join(
-            "file " + get_file_num_str(pl_info)
-            for pl_info in pl_infos
-        ))
-
-    if os.path.isfile(mp4_path):
-        os.remove(mp4_path)
-
-    cct_in = ffmpeg.input(cct_path, format='concat', safe=0)
-    cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
-    ffmpeg.run(cct_out, quiet=True)
+    return '\n'.join(
+        "file " + get_file_num_str(pl_info)
+        for pl_info in pl_infos
+    )
 
 
 def open_vlc(path: str):
@@ -441,15 +464,26 @@ def open_vlc(path: str):
     )
 
 
+def make_mp4(cct_path: str, mp4_path: str) -> None:
+    cct_in = ffmpeg.input(filename=cct_path, format='concat', safe=0)
+    cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
+    ffmpeg.run(stream_spec=cct_out, quiet=True)
+
+
 def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
+    cct_path = os.path.realpath(f"{pl_dir}/.concat")
+    mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
     audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     pl_infos = get_list(pl_url, make_reversed)
-
     clear_cache_dir(pl_dir)
+
     with open(m3u_path, 'w', encoding='utf-8') as o:
-        o.write(gen_m3u(pl_infos))
+        o.write(gen_m3u_from_pl_infos(pl_dir, pl_infos))
+
+    with open(cct_path, 'w', encoding='utf-8') as o:
+        o.write(gen_cct_from_pl_infos(pl_dir, pl_infos))
 
     dl_client = yt_dlp.YoutubeDL({
         'overwrites': True,
@@ -459,29 +493,43 @@ def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
         'quiet': True,
     })
 
-    new_infos = []
-    played = False
-    for pl_info in pl_infos:
-        new_info = process_pl_info(
+    executor = ThreadPoolExecutor(max_workers=3)
+    futures = [
+        executor.submit(
+            process_pl_info,
             dl_client,
             pl_dir,
             pl_info,
             make_reversed,
         )
+        for pl_info in pl_infos
+    ]
+
+    new_infos = []
+    played = False
+    for f in futures:
+        new_info = f.result()
         if not new_info:
             continue
-
         new_infos.append(new_info)
+
         if not played:
             played = True
             open_vlc(m3u_path)
 
     with open(txt_path, 'w', encoding='utf-8') as o:
-        o.write(gen_txt(new_infos))
+        o.write(gen_txt_from_pl_infos(pl_dir, pl_infos=new_infos))
 
-    os.remove(audio_temp_path)
-    make_cct(pl_dir, new_infos)
+    if os.path.isfile(audio_temp_path):
+        os.remove(audio_temp_path)
+
+    if os.path.isfile(mp4_path):
+        os.remove(mp4_path)
+
+    make_mp4(cct_path, mp4_path)
+
     del dl_client
+    del executor
 
 
 if __name__ == '__main__':
