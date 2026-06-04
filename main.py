@@ -8,6 +8,7 @@ import argparse
 import shutil
 import yt_dlp
 import ffmpeg
+import uuid
 import math
 import re
 import os
@@ -189,7 +190,7 @@ def get_processed_stream_audio(audio_path: str, make_reversed: bool):
 
 def get_processed_stream_video(duration: float, title: str, footer1: str, footer2: str, make_reversed: bool):
     video = ffmpeg.input(
-        f'color=color=#111111:r={FPS}:size=1280x120',
+        f'color=color=#111111:r={FPS}:size=1280x720',
         format='lavfi'
     )
 
@@ -404,13 +405,20 @@ def get_processed_stream_lyric_video(duration: float, title: str, srt_path: str,
     return video
 
 
-def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reversed: bool):
+def process_pl_info(pl_dir: str, pl_info, make_reversed: bool):
+    audio_temp_path = os.path.realpath(f"{pl_dir}/temp-{uuid.uuid4()}")
     try:
+        dl_client = yt_dlp.YoutubeDL({
+            'overwrites': True,
+            'format': 'bestaudio',
+            'outtmpl': audio_temp_path,
+            'no_warnings': True,
+            'quiet': True,
+        })
         ext_info = dl_client.extract_info(pl_info["url"])
     except yt_dlp.utils.DownloadError:
         return
 
-    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     probed_audio = probe_audio(audio_temp_path)
     merged_info = {
         'duration': math.ceil(probed_audio["duration"])
@@ -443,6 +451,10 @@ def process_pl_info(dl_client: yt_dlp.YoutubeDL, pl_dir: str, pl_info, make_reve
             merged_info["playlist_rank"], merged_info["id"], merged_info["title"],
         )
     )
+
+    if os.path.isfile(audio_temp_path):
+        os.remove(audio_temp_path)
+
     return merged_info
 
 
@@ -475,7 +487,6 @@ def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     txt_path = os.path.realpath(f"{pl_dir}/.txt")
     cct_path = os.path.realpath(f"{pl_dir}/.concat")
     mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
-    audio_temp_path = os.path.realpath(f"{pl_dir}/temp")
     pl_infos = get_list(pl_url, make_reversed)
     clear_cache_dir(pl_dir)
 
@@ -485,19 +496,10 @@ def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     with open(cct_path, 'w', encoding='utf-8') as o:
         o.write(gen_cct_from_pl_infos(pl_dir, pl_infos))
 
-    dl_client = yt_dlp.YoutubeDL({
-        'overwrites': True,
-        'format': 'bestaudio',
-        'outtmpl': audio_temp_path,
-        'no_warnings': True,
-        'quiet': True,
-    })
-
     executor = ThreadPoolExecutor(max_workers=3)
     futures = [
         executor.submit(
             process_pl_info,
-            dl_client,
             pl_dir,
             pl_info,
             make_reversed,
@@ -520,15 +522,11 @@ def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
     with open(txt_path, 'w', encoding='utf-8') as o:
         o.write(gen_txt_from_pl_infos(pl_dir, pl_infos=new_infos))
 
-    if os.path.isfile(audio_temp_path):
-        os.remove(audio_temp_path)
-
     if os.path.isfile(mp4_path):
         os.remove(mp4_path)
 
     make_mp4(cct_path, mp4_path)
 
-    del dl_client
     del executor
 
 
