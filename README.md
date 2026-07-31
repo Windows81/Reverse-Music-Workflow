@@ -1,21 +1,23 @@
 # VisualPlugin's Music-Reversing Workflow
 
-I have interesting musical tastes. For this reason, simply isntalling Spotify or using YouTube Music's website won't work for me. I use this tool to download playlists from the internet and get all the songs to play backwards.
+I have interesting musical tastes. For this reason, simply installing Spotify or using YouTube Music's website won't work for me. I use this tool to download playlists from the internet and get all the songs to play backwards.
 
-The outputs 
+## The Outputs
 
 Executables installed for `ffmpeg` and `vlc` are required. You will also need to perform `pip install -r requirements.txt`.
 
-## Examples of use
+## Examples of Use
 
 To download a YouTube-Music playlist and use FFmpeg to reverse the songs to `./"Dance Pop Bangers"`:
+
 ```
-python3 main.py --reverse "https://music.youtube.com/playlist?list=RDCLAK5uy_nfs_t4FUu00E5ED6lveEBBX1VMYe1mFjk" "Dance Pop Bangers"
+python3 ytdlp.py --reverse "https://music.youtube.com/playlist?list=RDCLAK5uy_nfs_t4FUu00E5ED6lveEBBX1VMYe1mFjk" "Dance Pop Bangers"
 ```
 
-To download a SoundCloud album to `./"Plugin ParaDice"` and *not* reverse the songs:
+To download a SoundCloud album to `./"Plugin ParaDice"` and _not_ reverse the songs:
+
 ```
-python3 main.py "https://soundcloud.com/aaaroh-abo-shadi/sets/plugin-paradice-a-gambling-ad" "Plugin ParaDice"
+python3 ytdlp.py "https://soundcloud.com/aaaroh-abo-shadi/sets/plugin-paradice-a-gambling-ad" "Plugin ParaDice"
 ```
 
 ## Resultant File Tree
