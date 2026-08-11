@@ -58,6 +58,8 @@ def process_file(audio_path: str, out_dir: str, index: int, total: int, make_rev
             make_reversed=make_reversed,
         ),
         output_path,
+        aq=0,
+        # ab='275kbps',
         t=audio_probe['duration'],
     )
     ffmpeg.run(final, overwrite_output=True, quiet=True)
@@ -68,6 +70,8 @@ def process(pl_glob: str, out_dir: str, make_reversed: bool):
     m3u_path = os.path.realpath(f"{out_dir}/.m3u8")
     cct_path = os.path.realpath(f"{out_dir}/.concat")
     mp4_path = os.path.realpath(f"{out_dir}/.mp4")
+    txt_path = os.path.realpath(f"{out_dir}/.txt")
+
     filenames = expand_glob(pl_glob, make_reversed)
 
     with open(m3u_path, 'w', encoding='utf-8') as o:
@@ -89,13 +93,16 @@ def process(pl_glob: str, out_dir: str, make_reversed: bool):
         for (index, audio_path) in filenames
     ]
 
-    played = False
-    for f in futures:
-        result, index = f.result()
-        print(f'{index:3d} {result['id3_artist']} - {result['id3_title']}')
-        if not played:
-            played = True
-            open_vlc(m3u_path)
+    with open(txt_path, 'w', encoding='utf-8') as o:
+        played = False
+        for f in futures:
+            result, index = f.result()
+            out_str = f'{index:3d} {result['id3_artist']} - {result['id3_title']}'
+            o.write(out_str)
+            print(out_str)
+            if not played:
+                played = True
+                open_vlc(m3u_path)
 
     make_mp4(cct_path, mp4_path)
 

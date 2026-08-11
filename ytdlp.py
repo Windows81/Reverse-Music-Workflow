@@ -117,7 +117,7 @@ def process_pl_info(pl_dir: str, pl_info, make_reversed: bool):
             make_reversed=make_reversed,
         ),
         result_path,
-        ab="192k",
+        aq=0,
         t=merged_info["duration"],
     )
     ffmpeg.run(final, overwrite_output=True, quiet=True)
@@ -144,25 +144,25 @@ def gen_cct_from_pl_infos(pl_dir: str, pl_infos: list) -> str:
     )
 
 
-def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
-    m3u_path = os.path.realpath(f"{pl_dir}/.m3u8")
-    txt_path = os.path.realpath(f"{pl_dir}/.txt")
-    cct_path = os.path.realpath(f"{pl_dir}/.concat")
-    mp4_path = os.path.realpath(f"{pl_dir}/.mp4")
+def process(out_dir: str, pl_url: str, make_reversed: bool) -> None:
+    m3u_path = os.path.realpath(f"{out_dir}/.m3u8")
+    txt_path = os.path.realpath(f"{out_dir}/.txt")
+    cct_path = os.path.realpath(f"{out_dir}/.concat")
+    mp4_path = os.path.realpath(f"{out_dir}/.mp4")
     pl_infos = get_list(pl_url, make_reversed)
-    clear_cache_dir(pl_dir)
+    clear_cache_dir(out_dir)
 
     with open(m3u_path, 'w', encoding='utf-8') as o:
-        o.write(gen_m3u_from_pl_infos(pl_dir, pl_infos))
+        o.write(gen_m3u_from_pl_infos(out_dir, pl_infos))
 
     with open(cct_path, 'w', encoding='utf-8') as o:
-        o.write(gen_cct_from_pl_infos(pl_dir, pl_infos))
+        o.write(gen_cct_from_pl_infos(out_dir, pl_infos))
 
     executor = ThreadPoolExecutor(max_workers=1)
     futures = [
         executor.submit(
             process_pl_info,
-            pl_dir,
+            out_dir,
             pl_info,
             make_reversed,
         )
@@ -182,7 +182,7 @@ def process(pl_dir: str, pl_url: str, make_reversed: bool) -> None:
             open_vlc(m3u_path)
 
     with open(txt_path, 'w', encoding='utf-8') as o:
-        o.write(gen_txt_from_pl_infos(pl_dir, pl_infos=new_infos))
+        o.write(gen_txt_from_pl_infos(out_dir, pl_infos=new_infos))
 
     if os.path.isfile(mp4_path):
         os.remove(mp4_path)
@@ -199,7 +199,7 @@ if __name__ == '__main__':
         help="Playlist URL to be processed by yt-dlp",
     )
     args.add_argument(
-        'pl_dir', type=str,
+        'out_dir', type=str,
         default='./test', nargs='?',
         help="%(type)s (default: \"%(default)s\")",
     )
