@@ -341,7 +341,7 @@ def open_vlc(path: str):
     )
 
 
-def make_mp4(cct_path: str, mp4_path: str) -> None:
+def make_combined_mp4(cct_path: str, mp4_path: str) -> None:
     cct_in = ffmpeg.input(filename=cct_path, format='concat', safe=0)
     cct_out = ffmpeg.output(cct_in, mp4_path, max_interleave_delta=0, c='copy')
-    ffmpeg.run(stream_spec=cct_out, quiet=True)
+    ffmpeg.run(stream_spec=cct_out, overwrite_output=True, quiet=True)

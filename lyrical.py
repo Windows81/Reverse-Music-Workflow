@@ -4,7 +4,7 @@ import argparse
 import os.path
 import ffmpeg
 
-from util import expand_glob, get_processed_stream_audio, get_processed_stream_lyric_video, make_mp4, open_vlc, probe_audio
+from util import expand_glob, get_processed_stream_audio, get_processed_stream_lyric_video, make_combined_mp4, open_vlc, probe_audio
 
 
 def get_output_path(index: int, make_reversed: bool, extension: str = 'mp4') -> str:
@@ -67,10 +67,10 @@ def process_file(audio_path: str, out_dir: str, index: int, total: int, make_rev
 
 
 def process(pl_glob: str, out_dir: str, make_reversed: bool):
-    m3u_path = os.path.realpath(f"{out_dir}/.m3u8")
     cct_path = os.path.realpath(f"{out_dir}/.concat")
-    mp4_path = os.path.realpath(f"{out_dir}/.mp4")
     txt_path = os.path.realpath(f"{out_dir}/.txt")
+    m3u_path = os.path.realpath(f"{out_dir}/.m3u8")
+    mp4_path = os.path.realpath(f"{out_dir}/_.mp4")
 
     filenames = expand_glob(pl_glob, make_reversed)
 
@@ -104,7 +104,7 @@ def process(pl_glob: str, out_dir: str, make_reversed: bool):
                 played = True
                 open_vlc(m3u_path)
 
-    make_mp4(cct_path, mp4_path)
+    make_combined_mp4(cct_path, mp4_path)
 
 
 if __name__ == '__main__':

@@ -1,12 +1,16 @@
 # pyright: basic, reportAssignmentType=false
 from concurrent.futures import ThreadPoolExecutor
+import yt_dlp.utils
 import argparse
+import shutil
+import ffmpeg
 import yt_dlp
 import uuid
+import math
 import os
 
 
-from util import gen_txt_from_pl_infos, make_mp4, open_vlc
+from util import gen_txt_from_pl_infos, get_processed_stream_audio, get_processed_stream_video, make_combined_mp4, open_vlc, probe_audio
 
 
 def get_list(u, make_reversed: bool) -> list[dict]:
@@ -187,7 +191,7 @@ def process(out_dir: str, pl_url: str, make_reversed: bool) -> None:
     if os.path.isfile(mp4_path):
         os.remove(mp4_path)
 
-    make_mp4(cct_path, mp4_path)
+    make_combined_mp4(cct_path, mp4_path)
 
     del executor
 
