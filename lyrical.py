@@ -97,7 +97,7 @@ def process(pl_glob: str, out_dir: str, make_reversed: bool):
         played = False
         for f in futures:
             result, index = f.result()
-            out_str = f'{index:3d} {result['id3_artist']} - {result['id3_title']}'
+            out_str = f'{index:3d} {result['id3_artist']} - {result['id3_title']}\n'
             o.write(out_str)
             print(out_str)
             if not played:
